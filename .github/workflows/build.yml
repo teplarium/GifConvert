@@ -1,0 +1,195 @@
+# Builds GifConvert for every platform on GitHub's servers (free for public repositories).
+#
+#   Actions tab -> Build -> Run workflow        — just build (files appear under Artifacts)
+#   git tag v2.0.0 && git push origin v2.0.0    — build and publish a release with all files
+name: Build
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write  # only needed to publish a release
+
+jobs:
+  windows:
+    name: Windows ${{ matrix.arch }}
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64, x86]  # x86 = the 32-bit version
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          architecture: ${{ matrix.arch }}
+
+      - name: Install build tools
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-build.txt
+
+      - name: Build
+        run: python -m PyInstaller --noconfirm --clean GifConvert.spec
+
+      - name: Self-test (converts a test video with all modes)
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath "dist\GifConvert.exe" -ArgumentList "--selftest", "$PWD\selftest.json" -Wait -PassThru
+          Get-Content selftest.json
+          if ($p.ExitCode -ne 0) { exit 1 }
+
+      - name: Rename
+        shell: pwsh
+        run: Move-Item dist\GifConvert.exe dist\GifConvert-windows-${{ matrix.arch }}.exe
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: GifConvert-windows-${{ matrix.arch }}
+          path: dist/GifConvert-windows-${{ matrix.arch }}.exe
+          if-no-files-found: error
+
+  linux:
+    name: Linux x64
+    # build on an older Ubuntu: a binary linked against an older glibc runs on newer distros too
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Python with tkinter
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-tk python3-venv python3-dev xvfb
+
+      - name: Install build tools
+        run: |
+          /usr/bin/python3 -m venv .venv
+          .venv/bin/python -m pip install --upgrade pip
+          .venv/bin/python -m pip install -r requirements-build.txt
+
+      - name: Build
+        run: .venv/bin/python -m PyInstaller --noconfirm --clean GifConvert.spec
+
+      - name: Self-test (converts a test video with all modes)
+        run: |
+          status=0
+          xvfb-run -a dist/GifConvert --selftest selftest.json || status=$?
+          cat selftest.json
+          exit $status
+
+      - name: Pack
+        # tar keeps the executable bit (the zip GitHub makes for Artifacts loses it)
+        run: |
+          mkdir -p out
+          cp README.md LICENSE THIRD_PARTY_NOTICES.md dist/
+          tar -C dist -czf out/GifConvert-linux-x64.tar.gz GifConvert README.md LICENSE THIRD_PARTY_NOTICES.md
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: GifConvert-linux-x64
+          path: out/GifConvert-linux-x64.tar.gz
+          if-no-files-found: error
+
+  macos:
+    name: macOS ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15        # Apple Silicon (M1 and newer)
+            arch: arm64
+          - runner: macos-15-intel  # Intel Macs
+            arch: intel
+    env:
+      PY_VERSION: "3.12.10"  # the official python.org installer — it already contains Tcl/Tk
+      # Signing and notarization turn on automatically once these repository secrets exist:
+      # MACOS_CERT_P12, MACOS_CERT_PASSWORD, MACOS_CODESIGN_IDENTITY, APPLE_ID,
+      # APPLE_TEAM_ID, APPLE_APP_PASSWORD (requires the Apple Developer Program).
+      HAVE_SIGNING: ${{ secrets.MACOS_CERT_P12 != '' }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Python from python.org
+        run: |
+          curl -fsSLo python.pkg "https://www.python.org/ftp/python/${PY_VERSION}/python-${PY_VERSION}-macos11.pkg"
+          sudo installer -pkg python.pkg -target /
+          echo "PY=/Library/Frameworks/Python.framework/Versions/${PY_VERSION%.*}/bin/python3" >> "$GITHUB_ENV"
+
+      - name: Install build tools
+        run: |
+          "$PY" -m venv .venv
+          .venv/bin/python -m pip install --upgrade pip
+          .venv/bin/python -m pip install -r requirements-build.txt
+
+      - name: Import signing certificate
+        if: env.HAVE_SIGNING == 'true'
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          MACOS_CODESIGN_IDENTITY: ${{ secrets.MACOS_CODESIGN_IDENTITY }}
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/build.keychain-db"
+          KEYCHAIN_PASS="$(uuidgen)"
+          echo "$MACOS_CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$KEYCHAIN_PASS" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASS" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/cert.p12" -P "$MACOS_CERT_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASS" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+          echo "MACOS_CODESIGN_IDENTITY=$MACOS_CODESIGN_IDENTITY" >> "$GITHUB_ENV"
+
+      - name: Build
+        run: .venv/bin/python -m PyInstaller --noconfirm --clean GifConvert.spec
+
+      - name: Self-test (converts a test video with all modes)
+        run: |
+          status=0
+          dist/GifConvert.app/Contents/MacOS/GifConvert --selftest "$PWD/selftest.json" || status=$?
+          cat selftest.json
+          exit $status
+
+      - name: Notarize
+        if: env.HAVE_SIGNING == 'true'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          ditto -c -k --keepParent dist/GifConvert.app notarize.zip
+          xcrun notarytool submit notarize.zip --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_PASSWORD" --wait
+          xcrun stapler staple dist/GifConvert.app
+
+      - name: Pack
+        # ditto keeps the signature and permissions inside the .app
+        run: |
+          mkdir -p out
+          ditto -c -k --keepParent dist/GifConvert.app "out/GifConvert-macos-${{ matrix.arch }}.zip"
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: GifConvert-macos-${{ matrix.arch }}
+          path: out/GifConvert-macos-${{ matrix.arch }}.zip
+          if-no-files-found: error
+
+  release:
+    name: GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows, linux, macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          path: release
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          generate_release_notes: true

@@ -1,0 +1,4 @@
+# To run from source:  pip install -r requirements.txt
+imageio-ffmpeg>=0.5   # ffmpeg, downloaded for your platform
+pillow>=10            # renders the UI (glass, cards, icons)
+tkinterdnd2>=0.4      # drag & drop of files into the window (optional)
