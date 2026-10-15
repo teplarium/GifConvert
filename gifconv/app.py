@@ -92,9 +92,8 @@ def selftest(report: Path) -> int:
         import tkinter
         rep["tcl"] = tkinter.Tcl().eval("info patchlevel")  # Tcl/Tk made it into the build
 
-        from . import glass  # Pillow made it into the build and renders the glass
-        img = glass.background(240, 120, 1.0)
-        glass.glass(img, (20, 20, 220, 100), 40, 1.0)
+        from . import draw  # Pillow made it into the build and renders the UI shapes
+        img = draw.dashed_rounded(240, 120, 16, draw.NAVY, draw.CARD, fill=draw.BG)
         rep["pillow"] = img.getpixel((120, 60))
         rep["ok"] = all(v > 0 for v in rep["gif_sizes"].values())
 

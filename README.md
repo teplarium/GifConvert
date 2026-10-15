@@ -28,8 +28,9 @@
 - **Size and length controls:** width, frame rate (GIF tops out at 50 fps), start time and duration.
 - **Automatic fixes:** portrait phone videos are rotated, interlaced camcorder footage is deinterlaced, and
   non-square pixels (DV, DVD) are corrected.
-- **Easy to use:** drag & drop files or whole folders, convert a batch with per-file progress, and cancel at any time.
-  GIFs go to a `gif` folder next to each video, or to a folder you choose.
+- **Simple flat interface:** drop files or whole folders into the list, choose quality, width and frame rate
+  with one click, convert a batch with per-file progress and cancel at any time. GIFs go to a `gif` folder next
+  to each video, or to a folder you choose. Click **Done** on a file to show it in its folder.
 - **Command-line mode** for scripts.
 
 ## Download
@@ -134,15 +135,14 @@ Every build runs a self-test that converts a test video with all three modes.
 ## How it works
 
 GifConvert runs ffmpeg with a palette workflow (`palettegen` + `paletteuse`), Lanczos scaling with accurate
-color conversion, and Sierra dithering, or Bayer in compact mode. The window is plain tkinter. The "liquid glass"
-elements are rendered with Pillow as real lenses: the background is magnified and refracted near the edges.
-Blur alone is not used. Text stays native, so it is crisp at any scaling.
+color conversion, and Sierra dithering, or Bayer in compact mode. The window is plain tkinter: rounded shapes are
+rendered with Pillow, while text and input fields stay native, so they are crisp at any display scaling.
 
 ```
 gifconvert.py         entry point (window / console)
 gifconv/core.py       ffmpeg discovery, probing, conversion with progress and cancel
 gifconv/gui.py        the window
-gifconv/glass.py      background, cards and glass rendering
+gifconv/draw.py       rounded shapes and brand colors
 gifconv/cli.py        console mode
 GifConvert.spec       PyInstaller settings (bundles ffmpeg, icon and licenses)
 ```
